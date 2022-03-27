@@ -96,7 +96,8 @@ Pin utils
     Pin widgets value getter and setter.
 
     You can use attribute or key index of ``pin`` object to get the current value of a pin widget.
-    When accessing the value of a widget that does not exist, it returns ``None`` instead of throwing an exception.
+    By default, when accessing the value of a widget that does not exist, it returns ``None`` instead of
+    throwing an exception.
 
     You can also use the ``pin`` object to set the value of pin widget:
 
@@ -114,6 +115,8 @@ Pin utils
     Note: When using :ref:`coroutine-based session <coroutine_based_session>`,
     you need to use the ``await pin.name`` (or ``await pin['name']``) syntax to get pin widget value.
 
+    Use `pin.pin.use_strict()` to enable strict mode for getting pin widget value.
+    An ``AssertionError`` will be raised when try to get value of pin widgets that are currently not in the page.
 
 .. autofunction:: pin_wait_change
 .. autofunction:: pin_update
@@ -331,7 +334,7 @@ def pin_update(name, **spec):
     send_msg('pin_update', spec=dict(name=name, attributes=attributes))
 
 
-def pin_on_change(name, onchange=None, clear=False, **callback_options):
+def pin_on_change(name, onchange=None, clear=False, init_run=False, **callback_options):
     """
     Bind a callback function to pin widget, the function will be called when user change the value of the pin widget.
 
@@ -343,6 +346,8 @@ def pin_on_change(name, onchange=None, clear=False, **callback_options):
     :param callable onchange: callback function
     :param bool clear: whether to clear the previous callbacks bound to this pin widget.
        If you just want to clear callbacks and not set new callback, use ``pin_on_change(name, clear=True)``.
+    :param bool init_run: whether to run the ``onchange`` callback once immediately before the pin widget changed.
+       This parameter can be used to initialize the output.
     :param callback_options: Other options of the ``onclick`` callback.
        Refer to the ``callback_options`` parameter of :func:`put_buttons() <pywebio.output.put_buttons>`
 
@@ -351,6 +356,8 @@ def pin_on_change(name, onchange=None, clear=False, **callback_options):
     assert not (onchange is None and clear is False), "When `onchange` is `None`, `clear` must be `True`"
     if onchange is not None:
         callback_id = output_register_callback(onchange, **callback_options)
+        if init_run:
+            onchange(pin[name])
     else:
         callback_id = None
     send_msg('pin_onchange', spec=dict(name=name, callback_id=callback_id, clear=clear))
