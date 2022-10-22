@@ -217,7 +217,7 @@ from typing import Union
 
 from .io_ctrl import output_register_callback, send_msg, Output, safely_destruct_output_when_exp, OutputList, scope2dom
 from .session import get_current_session, download
-from .utils import random_str, iscoroutinefunction, is_html_safe_value
+from .utils import random_str, iscoroutinefunction, check_dom_name_value
 
 try:
     from PIL.Image import Image as PILImage
@@ -274,7 +274,7 @@ def set_scope(name, container_scope=None, position=OutputPosition.BOTTOM, if_exi
     """
     if container_scope is None:
         container_scope = get_scope()
-    assert is_html_safe_value(name), "Scope name only allow letter/digit/'_'/'-' char."
+    check_dom_name_value(name, 'scope name')
     send_msg('output_ctl', dict(set_scope=scope2dom(name, no_css_selector=True),
                                 container=scope2dom(container_scope),
                                 position=position, if_exist=if_exist))
@@ -657,6 +657,10 @@ def put_table(tdata, header=None, scope=None, position=OutputPosition.BOTTOM) ->
         tdata = [list(i) for i in tdata]  # copy data
 
     if header:
+        # when tdata is empty, header will not be process
+        # see https://github.com/pywebio/PyWebIO/issues/453
+        if isinstance(header[0], (list, tuple)):
+            header = [h[0] for h in header]
         tdata = [header, *tdata]
 
     span = {}
@@ -961,6 +965,7 @@ def put_processbar(name, init=0, label=None, auto_close=False, scope=None,
 
     .. seealso:: use `set_processbar()` to set the progress of progress bar
     """
+    check_dom_name_value(name)
     processbar_id = 'webio-processbar-%s' % name
     percentage = init * 100
     label = '%.1f%%' % percentage if label is None else label
@@ -984,6 +989,8 @@ def set_processbar(name, value, label=None):
     See also: `put_processbar()`
     """
     from pywebio.session import run_js
+
+    check_dom_name_value(name)
 
     processbar_id = 'webio-processbar-%s' % name
     percentage = value * 100
@@ -1410,7 +1417,7 @@ def put_scope(name, content=[], scope=None, position=OutputPosition.BOTTOM) -> O
     if not isinstance(content, list):
         content = [content]
 
-    assert is_html_safe_value(name), "Scope name only allow letter/digit/'_'/'-' char."
+    check_dom_name_value(name, 'scope name')
     dom_id = scope2dom(name, no_css_selector=True)
 
     spec = _get_output_spec('scope', dom_id=dom_id, contents=content, scope=scope, position=position)
@@ -1592,7 +1599,7 @@ def popup(title, content=None, size=PopupSize.NORMAL, implicit_close=True, closa
 
     :param str title: The title of the popup.
     :type content: list/str/put_xxx()
-    :param content: The content of the popup can be a string, the put_xxx() calls , or a list of them.
+    :param content: The content of the popup. Can be a string, the put_xxx() calls, or a list of them.
     :param str size: The size of popup window. Available values are: ``'large'``, ``'normal'`` and ``'small'``.
     :param bool implicit_close: If enabled, the popup can be closed implicitly by clicking the content outside
         the popup window or pressing the ``Esc`` key. Default is ``False``.
@@ -1754,13 +1761,12 @@ def use_scope(name=None, clear=False, **kwargs):
 
     if name is None:
         name = random_str(10)
-    else:
-        assert is_html_safe_value(name), "Scope name only allow letter/digit/'_'/'-' char."
+    check_dom_name_value(name, 'scope name')
 
     def before_enter():
         if create_scope:
-            if_exist = 'clear' if clear else None
-            set_scope(name, if_exist=if_exist, **scope_params)
+            if_exist = 'blank' if clear else None
+            set_scope(name, if_exist=if_exist, **scope_params)  # lock the height of the scope and clear its content
 
     return use_scope_(name=name, before_enter=before_enter)
 
@@ -1781,7 +1787,8 @@ class use_scope_:
         If this method returns True, it means that the context manager can handle the exception,
         so that the with statement terminates the propagation of the exception
         """
-        get_current_session().pop_scope()
+        scope = get_current_session().pop_scope()
+        send_msg('output_ctl', dict(loose=scope2dom(scope)))  # revoke lock the height of the scope
         return False  # Propagate Exception
 
     def __call__(self, func):

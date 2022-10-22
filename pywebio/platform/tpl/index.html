@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="{{ base_url }}css/toastify.min.css">
     <link rel="stylesheet" href="{{ base_url }}css/bs-theme/{{ theme }}.min.css">
     <link rel="stylesheet" href="{{ base_url }}css/bootstrap-select.min.css">
-    <link rel="stylesheet" href="{{ base_url }}css/app.css">
+    <link rel="stylesheet" href="{{ base_url }}css/app.css?v={{ version }}">
     {% for css in css_file %}
         {% if css %}<link rel="stylesheet" href="{{ css }}">{% end %}
     {% end %}
@@ -57,7 +57,7 @@
     if (window.navigator.userAgent.indexOf('MSIE ') !== -1 || window.navigator.userAgent.indexOf('Trident/') !== -1)
         $('#output-container').html('<div class="alert alert-danger" role="alert"> Sorry, this website does not support IE browser. ☹ </div>');
 </script>
-<script src="{{ base_url }}js/pywebio.min.js"></script>
+<script src="{{ base_url }}js/pywebio.min.js?v={{ version }}"></script>
 {% for js in js_file %}
     {% if js %}<script src="{{ js }}"></script>{% end %}
 {% end %}
@@ -65,10 +65,19 @@
 <script src="{{ base_url }}js/require.min.js"></script> <!-- JS module loader -->
 
 <script>
+    if (window.WebIO === undefined) { // resource load failed
+        let url = new URL(window.location.href);
+        if (url.searchParams.get('_pywebio_cdn') === 'false') {
+            alert("Failed to load resource")
+        } else {
+            url.searchParams.set('_pywebio_cdn', 'false');
+            window.location.href = url.href;
+        }
+    }
 
     require.config({
         paths: {
-            'plotly': "https://cdn.jsdelivr.net/npm/plotly.js/dist/plotly.min", // 'https://cdn.plot.ly/plotly-latest.min'
+            'plotly': "https://cdn.plot.ly/plotly-2.12.1.min",
         },
     });
 
@@ -96,5 +105,9 @@
 {% if js_code %}
 <script>{% raw js_code %}</script>
 {% end %}
+
+<footer class="footer">
+    Powered by <a href="https://www.pyweb.io/" target="_blank">PyWebIO</a>
+</footer>
 </body>
 </html>

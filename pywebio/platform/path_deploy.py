@@ -1,21 +1,22 @@
-import os.path
-from functools import partial
-from contextlib import contextmanager
 import ast
+import os.path
+from contextlib import contextmanager
+from functools import partial
 
-import tornado
-from tornado import template
-from tornado.web import HTTPError, Finish
-from tornado.web import StaticFileHandler
+import tornado.template
+import tornado.web
+import tornado.ioloop
 
 from . import page
-from .httpbased import HttpHandler
+from .adaptor.http import HttpHandler
+from .page import make_applications
 from .tornado import webio_handler, set_ioloop
 from .tornado_http import TornadoHttpContext
 from .utils import cdn_validation, print_listen_address
-from .page import make_applications
 from ..session import register_session_implement, CoroutineBasedSession, ThreadBasedSession, Session
 from ..utils import get_free_port, STATIC_PATH, parse_file_size
+
+LOCAL_STATIC_URL = '/_pywebio_static'
 
 
 def filename_ok(f):
@@ -101,7 +102,7 @@ def _get_module(path, reload=False):
     return module
 
 
-_app_list_tpl = template.Template("""
+_app_list_tpl = tornado.template.Template("""
 <!DOCTYPE html>
 <html lang="">
 <head>
@@ -143,7 +144,7 @@ def default_index_page(path, base):
             dirs.append([(f + '/'), ''])
 
     items = dirs + files
-    max_name_width = max([len(n) for n, _ in items]+[0])
+    max_name_width = max([len(n) for n, _ in items] + [0])
     return _app_list_tpl.generate(files=items, title=title, max_name_width=max_name_width)
 
 
@@ -183,7 +184,7 @@ def get_app_from_path(request_path, base, index, reload=False):
     return 'error', 404
 
 
-def _path_deploy(base, port=0, host='', static_dir=None, cdn=True, max_payload_size=2 ** 20 * 200,
+def _path_deploy(base, port=0, host='', static_dir=None, max_payload_size=2 ** 20 * 200,
                  **tornado_app_settings):
     if not host:
         host = '0.0.0.0'
@@ -195,19 +196,15 @@ def _path_deploy(base, port=0, host='', static_dir=None, cdn=True, max_payload_s
 
     abs_base = os.path.normpath(os.path.abspath(base))
 
-    cdn = cdn_validation(cdn, 'warn', stacklevel=4)  # if CDN is not available, warn user and disable CDN
-    cdn_url = '/_pywebio_static/' if not cdn else cdn
-
     register_session_implement(CoroutineBasedSession)
     register_session_implement(ThreadBasedSession)
 
-    RequestHandler = yield cdn_url, abs_base
+    RequestHandler = yield abs_base
 
     handlers = []
     if static_dir is not None:
-        handlers.append((r"/static/(.*)", StaticFileHandler, {"path": static_dir}))
-    if not cdn:
-        handlers.append((r"/_pywebio_static/(.*)", StaticFileHandler, {"path": STATIC_PATH}))
+        handlers.append((r"/static/(.*)", tornado.web.StaticFileHandler, {"path": static_dir}))
+    handlers.append((LOCAL_STATIC_URL + r"/(.*)", tornado.web.StaticFileHandler, {"path": STATIC_PATH}))
     handlers.append((r"/.*", RequestHandler))
 
     print_listen_address(host, port)
@@ -252,29 +249,37 @@ def path_deploy(base, port=0, host='',
     # use `websocket_ping_interval` to  keep the connection alive
     tornado_app_settings.setdefault('websocket_ping_interval', 30)
     tornado_app_settings.setdefault('websocket_max_message_size', max_payload_size)  # Backward compatible
-    tornado_app_settings['websocket_max_message_size'] = parse_file_size(tornado_app_settings['websocket_max_message_size'])
+    tornado_app_settings['websocket_max_message_size'] = parse_file_size(
+        tornado_app_settings['websocket_max_message_size'])
     gen = _path_deploy(base, port=port, host=host,
-                       static_dir=static_dir,
-                       cdn=cdn, debug=debug,
+                       static_dir=static_dir, debug=debug,
                        max_payload_size=max_payload_size,
                        **tornado_app_settings)
 
-    cdn_url, abs_base = next(gen)
+    cdn = cdn_validation(cdn, 'warn', stacklevel=3)  # if CDN is not available, warn user and disable CDN
+
+    abs_base = next(gen)
 
     index_func = {True: partial(default_index_page, base=abs_base), False: lambda p: '403 Forbidden'}.get(index, index)
 
-    Handler = webio_handler(lambda: None, cdn_url, allowed_origins=allowed_origins,
+    Handler = webio_handler(lambda: None, cdn=cdn, allowed_origins=allowed_origins,
                             check_origin=check_origin, reconnect_timeout=reconnect_timeout)
 
     class WSHandler(Handler):
+
+        def get_cdn(self):
+            _cdn = super().get_cdn()
+            if not _cdn:
+                return LOCAL_STATIC_URL
+            return _cdn
 
         def get_app(self):
             reload = self.get_query_argument('reload', None) is not None
             type, res = get_app_from_path(self.request.path, abs_base, index=index_func, reload=reload)
             if type == 'error':
-                raise HTTPError(status_code=res)
+                raise tornado.web.HTTPError(status_code=res)
             elif type == 'html':
-                raise Finish(res)
+                raise tornado.web.Finish(res)
 
             app_name = self.get_query_argument('app', 'index')
             app = res.get(app_name) or res['index']
@@ -307,12 +312,13 @@ def path_deploy_http(base, port=0, host='',
     page.MAX_PAYLOAD_SIZE = max_payload_size = parse_file_size(max_payload_size)
 
     gen = _path_deploy(base, port=port, host=host,
-                       static_dir=static_dir,
-                       cdn=cdn, debug=debug,
+                       static_dir=static_dir, debug=debug,
                        max_payload_size=max_payload_size,
                        **tornado_app_settings)
 
-    cdn_url, abs_base = next(gen)
+    cdn = cdn_validation(cdn, 'warn', stacklevel=3)  # if CDN is not available, warn user and disable CDN
+
+    abs_base = next(gen)
     index_func = {True: partial(default_index_page, base=abs_base), False: lambda p: '403 Forbidden'}.get(index, index)
 
     def get_app(context: TornadoHttpContext):
@@ -320,18 +326,25 @@ def path_deploy_http(base, port=0, host='',
 
         type, res = get_app_from_path(context.get_path(), abs_base, index=index_func, reload=reload)
         if type == 'error':
-            raise HTTPError(status_code=res)
+            raise tornado.web.HTTPError(status_code=res)
         elif type == 'html':
-            raise Finish(res)
+            raise tornado.web.Finish(res)
 
         app_name = context.request_url_parameter('app', 'index')
         return res.get(app_name) or res['index']
 
-    handler = HttpHandler(app_loader=get_app, cdn=cdn_url,
-                          session_expire_seconds=session_expire_seconds,
-                          session_cleanup_interval=session_cleanup_interval,
-                          allowed_origins=allowed_origins,
-                          check_origin=check_origin)
+    class HttpPathDeployHandler(HttpHandler):
+        def get_cdn(self, context):
+            _cdn = super().get_cdn(context)
+            if not _cdn:
+                return LOCAL_STATIC_URL
+            return _cdn
+
+    handler = HttpPathDeployHandler(app_loader=get_app, cdn=cdn,
+                                    session_expire_seconds=session_expire_seconds,
+                                    session_cleanup_interval=session_cleanup_interval,
+                                    allowed_origins=allowed_origins,
+                                    check_origin=check_origin)
 
     class ReqHandler(tornado.web.RequestHandler):
         def options(self):

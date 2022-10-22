@@ -11,7 +11,7 @@ const common_input_tpl = `
 <div class="form-group">
     {{#label}}<label for="{{id_name}}">{{label}}</label>{{/label}}
     {{#action}}<div class="input-group">{{/action}} 
-        <input type="{{type}}" id="{{id_name}}" aria-describedby="{{id_name}}_action_btn" {{#datalist}}list="{{id_name}}-list"{{/datalist}} class="form-control" >
+        <input type="{{type}}" id="{{id_name}}" aria-describedby="{{id_name}}_action_btn" list="{{id_name}}-list" class="form-control" >
         <datalist id="{{id_name}}-list">
             ${datalist_tpl}
         </datalist>
@@ -28,7 +28,7 @@ const common_input_tpl = `
 
 
 export class Input extends InputItem {
-    static accept_input_types: string[] = ["text", "password", "number", "float", "color", "date", "range", "time", "email", "url"];
+    static accept_input_types: string[] = ["text", "password", "number", "float", "color", "date", "range", "time", "email", "url", "datetime-local"];
     previous_value = '';
 
     constructor(spec: any, task_id: string, on_input_event: (event_name: string, input_item: InputItem) => void) {

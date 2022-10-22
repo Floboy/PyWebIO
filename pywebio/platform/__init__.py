@@ -144,7 +144,7 @@ Other
 
 """
 
-from .httpbased import run_event_loop
+from .adaptor.http import run_event_loop
 from .page import config
 from .page import seo
 from .path_deploy import path_deploy_http, path_deploy
@@ -168,5 +168,10 @@ except Exception:
 
 try:
     from . import tornado_http
+except Exception:
+    pass
+
+try:
+    from . import aiohttp
 except Exception:
     pass
